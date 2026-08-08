@@ -868,8 +868,9 @@ def price_text(code: str) -> str:
 def platform_hint(platform: str) -> str:
     if platform == "tiktok":
         return (
-            "\n\n💡 TikTok блокирует твой IP. Включи VPN (режим «всё устройство»/TUN), "
-            "или укажи PROXY в .env. Если VPN-клиент отдаёт локальный прокси — бот найдёт его сам."
+            "\n\n💡 TikTok блокирует IP сервера. Решение: резидентный (мобильный) прокси "
+            "в PROXY= в .env на сервере, после чего перезапустить бота. "
+            "Обычный VPN/датацентр-прокси TikTok тоже банит."
         )
     if platform == "instagram":
         return "\n\n💡 Instagram требует вход: укажи COOKIES_BROWSER=chrome в .env (браузер должен быть закрыт)."
