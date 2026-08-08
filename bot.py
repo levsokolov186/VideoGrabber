@@ -1244,7 +1244,7 @@ async def try_download(message: Message, urls: list[str], is_audio: bool = False
             last_err = e
             logging.warning("url failed: %s", url)
     await status.edit_text(
-        f"❌ Не удалось скачать: {type(last_err).__name__}: {last_err}"
+        f"❌ Не удалось скачать: {html.escape(str(last_err))}"
         f"{platform_hint(detect_platform(allowed[0]))}"
     )
     return None
