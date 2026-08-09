@@ -691,31 +691,6 @@ def probe_audio_info(path: str) -> dict:
         return {}
 
 
-def probe_fps(path: str) -> int:
-    if not FFPROBE:
-        return 30
-    try:
-        r = subprocess.run(
-            [
-                FFPROBE, "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=avg_frame_rate",
-                "-of", "default=noprint_wrappers=1", path,
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        raw = ((r.stdout or "").partition("=")[2]).strip()
-        num, _, den = raw.partition("/")
-        num, den = float(num), float(den or 1)
-        fps = num / den if den else 30.0
-        if fps > 55:
-            return 60
-        if fps > 25:
-            return 30
-        return max(int(round(fps)), 24)
-    except Exception:
-        return 30
-
-
 def audio_needs_fix(path: str) -> bool:
     if not path.lower().endswith(".mp4"):
         return False
@@ -732,33 +707,6 @@ def audio_needs_fix(path: str) -> bool:
     except ValueError:
         pass
     return False
-
-
-def reencode_tiktok(path: str) -> str:
-    if not FFMPEG:
-        return path
-    fps = probe_fps(path)
-    out = path + ".fix.mp4"
-    try:
-        r = subprocess.run(
-            [
-                FFMPEG, "-y", "-i", path,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-                "-pix_fmt", "yuv420p", "-fps_mode", "cfr", "-r", str(fps),
-                "-c:a", "aac", "-profile:a", "aac_low", "-b:a", "192k",
-                "-movflags", "+faststart", out,
-            ],
-            capture_output=True,
-            timeout=600,
-        )
-        if r.returncode == 0 and os.path.exists(out):
-            os.replace(out, path)
-            logging.info("tiktok re-encoded to CFR h264 + aac 192k (%d fps)", fps)
-        else:
-            logging.warning("tiktok re-encode failed: %s", r.stderr[-400:] if r.stderr else "?")
-    except Exception as e:
-        logging.warning("tiktok re-encode error: %s", e)
-    return path
 
 
 def fix_audio(path: str) -> str:
@@ -804,9 +752,7 @@ def _download_once(
                     path = os.path.splitext(path)[0] + suffix
             if not os.path.exists(path):
                 raise FileNotFoundError("Файл не был сохранён")
-            if platform == "tiktok" and not is_audio:
-                path = reencode_tiktok(path)
-            elif not is_audio:
+            if not is_audio:
                 path = fix_audio(path)
             final_dir = tempfile.mkdtemp(prefix="tg_")
             final_path = os.path.join(final_dir, os.path.basename(path))
