@@ -64,8 +64,8 @@ MAX_HEIGHT = int(os.getenv("MAX_HEIGHT", "0") or 0)
 TG_API_SERVER = os.getenv("TG_API_SERVER", "").strip() or None
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 SUPPORT = "@DimaKacaricka14363"
-DOCS_PRIVACY = "https://telegra.ph/Politika-konfidencialnosti-08-09-57"
-DOCS_AGREEMENT = "https://telegra.ph/Polzovatelskoe-soglashenie-08-09-28"
+DOCS_PRIVACY = "https://telegra.ph/Politika-konfidencialnosti-08-09-60"
+DOCS_AGREEMENT = "https://telegra.ph/Polzovatelskoe-soglashenie-08-09-29"
 
 
 def get_system_proxy() -> str | None:
@@ -1064,9 +1064,10 @@ async def on_buy(call: CallbackQuery):
         f"<a href=\"{DOCS_AGREEMENT}\">Пользовательское соглашение</a> "
         f"и <a href=\"{DOCS_PRIVACY}\">Политику конфиденциальности</a> "
         "(п. 1.2, 7.1 Соглашения).\n\n"
-        "ℹ️ <b>Возврат:</b> в течение 24 часов с момента оплаты, если услуга "
-        "не была оказана по технической вине Сервиса (п. 7.3–7.5). Возврат платежа "
-        "(chargeback) без обращения в поддержку запрещён (п. 7.7).\n\n"
+        "ℹ️ <b>Возврат:</b> в течение 24 часов с момента оплаты и только если "
+        "по технической вине Сервиса ты не смог скачать ни одно видео "
+        "(п. 7.4 Соглашения). Сбой отдельной площадки — не основание для возврата. "
+        "Chargeback без обращения в поддержку запрещён (п. 7.7).\n\n"
         "<i>Нажми «Оплатить» для тестовой оплаты.</i>"
     )
     kb = InlineKeyboardMarkup(
