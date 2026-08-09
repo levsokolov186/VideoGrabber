@@ -64,6 +64,8 @@ MAX_HEIGHT = int(os.getenv("MAX_HEIGHT", "0") or 0)
 TG_API_SERVER = os.getenv("TG_API_SERVER", "").strip() or None
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 SUPPORT = "@DimaKacaricka14363"
+DOCS_PRIVACY = "https://telegra.ph/Politika-konfidencialnosti-08-09-57"
+DOCS_AGREEMENT = "https://telegra.ph/Polzovatelskoe-soglashenie-08-09-28"
 
 
 def get_system_proxy() -> str | None:
@@ -879,9 +881,8 @@ def price_text(code: str) -> str:
 def platform_hint(platform: str) -> str:
     if platform == "tiktok":
         return (
-            "\n\n💡 TikTok блокирует IP сервера. Решение: резидентный (мобильный) прокси "
-            "в PROXY= в .env на сервере, после чего перезапустить бота. "
-            "Обычный VPN/датацентр-прокси TikTok тоже банит."
+            "\n\n💡 Если возникают ошибки доступа при скачивании, "
+            "обратись в службу поддержки: " + SUPPORT
         )
     if platform == "instagram":
         if COOKIES_FILE:
@@ -894,11 +895,35 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="📋 Мой тариф", callback_data="my_tariff")],
+        [InlineKeyboardButton(text="📄 Документы", callback_data="docs")],
         [InlineKeyboardButton(text="📞 Служба поддержки", url=f"https://t.me/{SUPPORT.lstrip('@')}")],
     ]
     if is_admin(user_id):
         kb.append([InlineKeyboardButton(text="⚙️ Админ панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def docs_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔒 Политика конфиденциальности", url=DOCS_PRIVACY)],
+            [InlineKeyboardButton(text="📋 Пользовательское соглашение", url=DOCS_AGREEMENT)],
+            [InlineKeyboardButton(text="💬 Цены и тарифы", callback_data="tariffs")],
+            [InlineKeyboardButton(text="📞 Поддержка", url=f"https://t.me/{SUPPORT.lstrip('@')}")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back")],
+        ]
+    )
+
+
+def docs_text() -> str:
+    return (
+        "📄 <b>Документы и информация</b>\n\n"
+        "• 🔒 <b>Политика конфиденциальности</b> — как обрабатываются данные\n"
+        "• 📋 <b>Пользовательское соглашение</b> — правила использования и возвраты\n"
+        "• 💬 <b>Цены и тарифы</b> — сколько стоит и что входит\n"
+        "• 📞 <b>Поддержка</b> — связь с администрацией\n\n"
+        "Документы всегда доступны по ссылкам ниже."
+    )
 
 
 def tariffs_text() -> str:
@@ -1086,6 +1111,11 @@ async def on_my_tariff(call: CallbackQuery):
         inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back")]]
     )
     await call.message.edit_text(my_tariff_text(call.from_user.id), reply_markup=kb)
+
+
+@dp.callback_query(F.data == "docs")
+async def on_docs(call: CallbackQuery):
+    await call.message.edit_text(docs_text(), reply_markup=docs_keyboard())
 
 
 @dp.callback_query(F.data == "admin_panel")
