@@ -334,16 +334,16 @@ PLANS = {
         "price": 199,
         "period": 30,
         "duration_label": "30 дней",
-        "platforms": {"youtube", "likee", "coub", "streamable", "other"},
-        "desc": "YouTube + ~10 малоизвестных соцсетей (Likee, Coub, Streamable и др.).",
+        "platforms": {"youtube", "likee", "coub", "streamable", "rutube", "pinterest", "twitter", "reddit", "facebook", "twitch"},
+        "desc": "YouTube и ~10 малоизвестных соцсетей (Likee, Coub, Streamable и др.)",
     },
     "299": {
         "name": "299 ₽/мес",
         "price": 299,
         "period": 30,
         "duration_label": "30 дней",
-        "platforms": {"youtube", "tiktok", "likee", "coub", "streamable", "other"},
-        "desc": "YouTube + TikTok, все соцсети из дешёвого тарифа и ещё ~10 (всего ~20).",
+        "platforms": {"youtube", "tiktok", "likee", "coub", "streamable", "rutube", "pinterest", "twitter", "reddit", "facebook", "twitch"},
+        "desc": "YouTube + TikTok и ~20 соцсетей",
     },
     "399": {
         "name": "399 ₽/мес",
@@ -351,10 +351,7 @@ PLANS = {
         "period": 30,
         "duration_label": "30 дней",
         "platforms": ALL_PLATFORMS,
-        "desc": (
-            "YouTube + TikTok + Instagram + VK, все ~20 соцсетей из среднего тарифа "
-            "и ещё ~10 (всего ~30)."
-        ),
+        "desc": "YouTube + TikTok + Instagram + VK и ~30 соцсетей",
     },
     "year": {
         "name": "4500 ₽/год",
@@ -362,7 +359,7 @@ PLANS = {
         "period": 365,
         "duration_label": "365 дней",
         "platforms": ALL_PLATFORMS,
-        "desc": f"Абсолютно все соцсети (~{TOTAL_PLATFORMS}) на целый год.",
+        "desc": "Все поддерживаемые Сервисом площадки",
     },
 }
 
@@ -930,7 +927,7 @@ def tariffs_text() -> str:
     lines = ["📊 <b>Доступные тарифы:</b>\n"]
     for key in ("trial", "199", "299", "399", "year"):
         t = PLANS[key]
-        lines.append(f"• {t['name']} — {price_text(key)} ({t['period']} дн.)")
+        lines.append(f"• <b>{t['name']}</b> ({t['period']} дн.) — {price_text(key)}\n  {t['desc']}")
     lines.append("\nВыбери тариф:")
     return "\n".join(lines)
 
