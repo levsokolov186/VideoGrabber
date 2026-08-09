@@ -332,16 +332,16 @@ PLANS = {
         "price": 199,
         "period": 30,
         "duration_label": "30 дней",
-        "platforms": {"tiktok", "likee", "coub", "streamable"},
-        "desc": "TikTok + Likee, Coub, Streamable.",
+        "platforms": {"youtube", "likee", "coub", "streamable", "other"},
+        "desc": "YouTube + ~10 малоизвестных соцсетей (Likee, Coub, Streamable и др.).",
     },
     "299": {
         "name": "299 ₽/мес",
         "price": 299,
         "period": 30,
         "duration_label": "30 дней",
-        "platforms": {"youtube", "tiktok", "likee", "coub", "streamable"},
-        "desc": "TikTok + YouTube + Likee, Coub, Streamable.",
+        "platforms": {"youtube", "tiktok", "likee", "coub", "streamable", "other"},
+        "desc": "YouTube + TikTok, все соцсети из дешёвого тарифа и ещё ~10 (всего ~20).",
     },
     "399": {
         "name": "399 ₽/мес",
@@ -350,8 +350,8 @@ PLANS = {
         "duration_label": "30 дней",
         "platforms": ALL_PLATFORMS,
         "desc": (
-            f"Все платформы: 10 популярных — {POPULAR_10} "
-            f"и все остальные (~{TOTAL_PLATFORMS - POPULAR_COUNT} шт)."
+            "YouTube + TikTok + Instagram + VK, все ~20 соцсетей из среднего тарифа "
+            "и ещё ~10 (всего ~30)."
         ),
     },
     "year": {
@@ -360,7 +360,7 @@ PLANS = {
         "period": 365,
         "duration_label": "365 дней",
         "platforms": ALL_PLATFORMS,
-        "desc": f"Все платформы (~{TOTAL_PLATFORMS}) на целый год.",
+        "desc": f"Абсолютно все соцсети (~{TOTAL_PLATFORMS}) на целый год.",
     },
 }
 
