@@ -733,10 +733,75 @@ def fix_audio(path: str) -> str:
     return path
 
 
+def instagram_direct_download(url: str, proxy: str | None, outdir: str) -> str:
+    extract_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "retries": 2,
+    }
+    if proxy:
+        extract_opts["proxy"] = proxy
+    if COOKIES_FILE:
+        extract_opts["cookiefile"] = COOKIES_FILE
+    if COOKIES_BROWSER:
+        extract_opts["cookiesfrombrowser"] = (COOKIES_BROWSER, None, None, None)
+    with YoutubeDL(extract_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if info.get("_type") == "playlist" and not info.get("entries"):
+        raise ValueError("Не удалось получить видео по ссылке")
+    formats = [f for f in info.get("formats") or [] if f.get("url")]
+    combined = [f for f in formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
+    mp4 = [f for f in (combined or formats) if f.get("ext") == "mp4"]
+    pool = mp4 or combined or formats
+    if not pool:
+        raise ValueError("Не удалось найти прямую ссылку на видео")
+    best = max(pool, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))
+    file_url = best["url"]
+    ext = best.get("ext") or "mp4"
+    dest = os.path.join(outdir, f"{info.get('id', 'video')}.{ext}")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        ),
+        "Referer": "https://www.instagram.com/",
+        "Accept": "*/*",
+    }
+    if COOKIES_FILE:
+        try:
+            from http.cookiejar import MozillaCookieJar
+
+            jar = MozillaCookieJar(COOKIES_FILE)
+            jar.load(ignore_discard=True, ignore_expires=True)
+            cookie_header = "; ".join(f"{c.name}={c.value}" for c in jar)
+            if cookie_header:
+                headers["Cookie"] = cookie_header
+        except Exception as e:
+            logging.warning("cookie load failed: %s", e)
+    req = urllib.request.Request(file_url, headers=headers)
+    with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f)
+    logging.info("instagram file fetched directly")
+    return dest
+
+
 def _download_once(
     url: str, is_audio: bool, proxy: str | None, platform: str = ""
 ) -> str:
     with tempfile.TemporaryDirectory() as outdir:
+        if platform == "instagram" and not is_audio:
+            try:
+                path = instagram_direct_download(url, proxy, outdir)
+                path = fix_audio(path)
+                final_dir = tempfile.mkdtemp(prefix="tg_")
+                final_path = os.path.join(final_dir, os.path.basename(path))
+                os.replace(path, final_path)
+                return final_path
+            except Exception as e:
+                logging.warning("instagram direct failed (%s), falling back", e)
         opts = build_opts(outdir, is_audio, proxy, platform)
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -819,7 +884,9 @@ def platform_hint(platform: str) -> str:
             "Обычный VPN/датацентр-прокси TikTok тоже банит."
         )
     if platform == "instagram":
-        return "\n\n💡 Instagram требует вход: укажи COOKIES_BROWSER=chrome в .env (браузер должен быть закрыт)."
+        if COOKIES_FILE:
+            return "\n\n💡 Ссылка ведёт на приватный аккаунт или ограниченный контент — такое видео недоступно для скачивания."
+        return "\n\n💡 Instagram требует вход: укажи COOKIES_FILE=/путь/cookies.txt в .env (см. инструкцию)."
     return ""
 
 
