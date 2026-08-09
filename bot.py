@@ -598,9 +598,9 @@ def build_opts(
         "no_warnings": True,
         "noplaylist": True,
         "windowsfilenames": True,
-        "socket_timeout": 15,
-        "retries": 2,
-        "fragment_retries": 2,
+        "socket_timeout": 60,
+        "retries": 5,
+        "fragment_retries": 5,
     }
     effective = proxy or PROXY
     if effective:
