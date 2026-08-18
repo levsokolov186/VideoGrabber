@@ -59,6 +59,10 @@ if not BOT_TOKEN:
 
 PROXY = os.getenv("PROXY", "").strip() or None
 COOKIES_FILE = os.getenv("COOKIES_FILE", "").strip() or None
+if not COOKIES_FILE:
+    default_cookies = os.path.join(BASE_DIR, "cookies.txt")
+    if os.path.exists(default_cookies):
+        COOKIES_FILE = default_cookies
 COOKIES_BROWSER = os.getenv("COOKIES_BROWSER", "").strip() or None
 MAX_HEIGHT = int(os.getenv("MAX_HEIGHT", "0") or 0)
 TG_API_SERVER = os.getenv("TG_API_SERVER", "").strip() or None
@@ -601,7 +605,10 @@ def build_opts(
         "retries": 5,
         "fragment_retries": 5,
     }
-    effective = proxy or PROXY
+    if proxy == "":
+        effective = None
+    else:
+        effective = proxy or PROXY
     if effective:
         base["proxy"] = effective
     if COOKIES_FILE:
@@ -831,9 +838,9 @@ def download(url: str, is_audio: bool = False) -> str:
 
     if strict:
         order = [p for p in (PROXY, local) if p]
-        order.append(None)
+        order.append("")
     else:
-        order = [None, PROXY, local]
+        order = ["", PROXY, local]
         order += [next_proxy() for _ in range(2)]
 
     last_error: Exception | None = None
