@@ -631,7 +631,7 @@ def build_opts(
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
         }
     if platform == "tiktok":
-        fmt = "b[ext=mp4]/b"
+        fmt = f"b[ext=mp4][vcodec^=avc][height<={MAX_HEIGHT if MAX_HEIGHT else 1080}]/b[ext=mp4][height<={MAX_HEIGHT if MAX_HEIGHT else 1080}]/b"
     elif MAX_HEIGHT:
         fmt = f"bv*[vcodec^=avc][height<={MAX_HEIGHT}]+ba/b[ext=mp4][height<={MAX_HEIGHT}]/bv*+ba/b"
     else:
