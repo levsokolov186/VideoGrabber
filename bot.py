@@ -845,8 +845,8 @@ def download(url: str, is_audio: bool = False) -> str:
     local = get_local_proxy()
 
     if strict:
-        order = [p for p in (PROXY, local) if p]
-        order.append("")
+        order = ["", PROXY, local]
+        order += [next_proxy() for _ in range(2)]
     else:
         order = ["", PROXY, local]
         order += [next_proxy() for _ in range(2)]
