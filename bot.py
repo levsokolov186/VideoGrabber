@@ -1319,6 +1319,21 @@ async def try_download(message: Message, urls: list[str], is_audio: bool = False
     return None
 
 
+@dp.message(Command("audio"))
+async def on_audio(message: Message):
+    urls = extract_urls(message.text)
+    if not urls:
+        await message.answer("Пример: /audio https://youtube.com/watch?v=…")
+        return
+
+    path = await try_download(message, urls, is_audio=True)
+    if not path:
+        return
+
+    await message.answer_audio(FSInputFile(path))
+    cleanup(path)
+
+
 @dp.message(F.text)
 async def on_text(message: Message):
     urls = extract_urls(message.text)
@@ -1348,21 +1363,6 @@ async def on_text(message: Message):
             )
     finally:
         cleanup(path)
-
-
-@dp.message(Command("audio"))
-async def on_audio(message: Message):
-    urls = extract_urls(message.text)
-    if not urls:
-        await message.answer("Пример: /audio https://youtube.com/watch?v=…")
-        return
-
-    path = await try_download(message, urls, is_audio=True)
-    if not path:
-        return
-
-    await message.answer_audio(FSInputFile(path))
-    cleanup(path)
 
 
 async def main():
