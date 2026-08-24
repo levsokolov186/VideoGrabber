@@ -631,9 +631,9 @@ def build_opts(
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
         }
     if platform == "tiktok":
-        fmt = "bestvideo+bestaudio/best"
+        fmt = "best"
     else:
-        fmt = "bestvideo+bestaudio/best"
+        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
     return {
         **base,
         "format": fmt,
