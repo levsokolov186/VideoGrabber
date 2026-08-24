@@ -722,26 +722,21 @@ def audio_needs_fix(path: str) -> bool:
 
 
 def fix_audio(path: str) -> str:
-    if not FFMPEG or not audio_needs_fix(path):
-        return path
-    out = path + ".fix.mp4"
+    out = path + ".fast.mp4"
     try:
         r = subprocess.run(
             [
                 FFMPEG, "-y", "-i", path,
-                "-c:v", "copy", "-c:a", "aac", "-profile:a", "aac_low",
-                "-b:a", "192k", "-movflags", "+faststart", out,
+                "-c", "copy", "-movflags", "+faststart", out,
             ],
             capture_output=True,
             timeout=180,
         )
         if r.returncode == 0 and os.path.exists(out):
             os.replace(out, path)
-            logging.info("audio upgraded to aac 192k")
-        else:
-            logging.warning("audio fix failed: %s", r.stderr[-400:] if r.stderr else "?")
+            logging.info("video optimized for streaming (faststart)")
     except Exception as e:
-        logging.warning("audio fix error: %s", e)
+        logging.warning("optimization error: %s", e)
     return path
 
 
@@ -829,10 +824,8 @@ def _download_once(
                     path = os.path.splitext(path)[0] + suffix
             if not os.path.exists(path):
                 raise FileNotFoundError("Файл не был сохранён")
-            # --- Перекодирование отключено для исключения лагов ---
-            # if not is_audio:
-            #     path = fix_audio(path)
-            # -----------------------------------------------------
+            if not is_audio:
+                path = fix_audio(path)
             final_dir = tempfile.mkdtemp(prefix="tg_")
             final_path = os.path.join(final_dir, os.path.basename(path))
             os.replace(path, final_path)
