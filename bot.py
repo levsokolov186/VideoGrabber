@@ -829,8 +829,10 @@ def _download_once(
                     path = os.path.splitext(path)[0] + suffix
             if not os.path.exists(path):
                 raise FileNotFoundError("Файл не был сохранён")
-            if not is_audio and platform == "tiktok":
-                path = fix_audio(path)
+            # --- Перекодирование отключено для исключения лагов ---
+            # if not is_audio:
+            #     path = fix_audio(path)
+            # -----------------------------------------------------
             final_dir = tempfile.mkdtemp(prefix="tg_")
             final_path = os.path.join(final_dir, os.path.basename(path))
             os.replace(path, final_path)
