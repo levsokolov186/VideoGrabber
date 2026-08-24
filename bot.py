@@ -200,7 +200,7 @@ def audit(action: str, detail: str) -> None:
 
 
 RATE_WINDOW = 5.0
-RATE_MAX = 25
+RATE_MAX = 1000
 
 
 class RateLimitMiddleware(BaseMiddleware):
@@ -245,7 +245,7 @@ dp = Dispatcher()
 dp.message.outer_middleware(RateLimitMiddleware())
 dp.callback_query.outer_middleware(RateLimitMiddleware())
 
-DOWNLOAD_SEM = asyncio.Semaphore(2)
+DOWNLOAD_SEM = asyncio.Semaphore(100)
 USER_DOWNLOAD_LOCKS: dict[int, asyncio.Lock] = {}
 
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
@@ -1292,10 +1292,9 @@ async def try_download(message: Message, urls: list[str], is_audio: bool = False
     label = "⏳ Скачиваю аудио…" if is_audio else "⏳ Скачиваю, подожди немного…"
     status = await message.answer(label)
     last_err: Exception | None = None
-    user_lock = USER_DOWNLOAD_LOCKS.setdefault(message.from_user.id, asyncio.Lock())
     for url in allowed:
         try:
-            async with user_lock, DOWNLOAD_SEM:
+            async with DOWNLOAD_SEM:
                 path = await asyncio.to_thread(download, url, is_audio)
             mark_used(message.from_user.id)
             return path
@@ -1347,8 +1346,9 @@ async def on_text(message: Message):
             await message.answer_document(FSInputFile(path))
         except Exception:
             size = os.path.getsize(path) / 1024 / 1024
+            max_mb = 2000 if TG_API_SERVER else 50
             await status.edit_text(
-                f"❌ Файл {size:.0f} МБ не проходит лимит Telegram (50 МБ). "
+                f"❌ Файл {size:.0f} МБ не проходит лимит Telegram ({max_mb} МБ). "
                 f"Попробуй /audio для звука или другую ссылку."
             )
     finally:
