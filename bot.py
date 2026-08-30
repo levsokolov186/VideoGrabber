@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import requests
 from collections import deque
 from datetime import datetime
 from urllib.parse import urlparse
@@ -54,8 +55,12 @@ def load_env(path: str) -> None:
 load_env(ENV_PATH)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+MERCHANT_ID = os.getenv("MERCHANT_ID")
+SECRET_KEY = os.getenv("SECRET_KEY")
 if not BOT_TOKEN:
     sys.exit("Укажите BOT_TOKEN в файле .env или в переменной окружения")
+if not MERCHANT_ID or not SECRET_KEY:
+    sys.exit("Укажите MERCHANT_ID и SECRET_KEY в файле .env")
 
 PROXY = os.getenv("PROXY", "").strip() or None
 COOKIES_FILE = os.getenv("COOKIES_FILE", "").strip() or None
@@ -407,6 +412,15 @@ def init_db() -> None:
                 "used INTEGER DEFAULT 0,"
                 "downloads INTEGER DEFAULT 0,"
                 "trial_used INTEGER DEFAULT 0)"
+            )
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS payments ("
+                "transaction_id TEXT PRIMARY KEY,"
+                "user_id INTEGER NOT NULL,"
+                "amount INTEGER NOT NULL,"
+                "plan TEXT NOT NULL,"
+                "status TEXT NOT NULL,"
+                "expires_at INTEGER NOT NULL)"
             )
             for col, ddl in (
                 ("username", "TEXT"),
@@ -873,6 +887,79 @@ def cleanup(path: str) -> None:
         pass
 
 
+# ─── Платежи Platega ───────────────────────────────────────────────────
+
+def create_platega_transaction(user_id, amount, plan, username):
+    url = "https://app.platega.io/v2/transaction/process"
+    headers = {
+        "X-MerchantId": MERCHANT_ID,
+        "X-Secret": SECRET_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "paymentDetails": {"amount": amount, "currency": "RUB"},
+        "description": f"Оплата тарифа {plan}",
+        "return": "https://t.me/your_bot_username",
+        "failedUrl": "https://t.me/your_bot_username",
+        "metadata": {"userId": str(user_id), "userName": username or str(user_id)}
+    }
+    try:
+        response = requests.post(url, json=data, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        logging.error("Platega create failed: %s", e)
+    return None
+
+def get_platega_transaction(transaction_id):
+    url = f"https://app.platega.io/transaction/{transaction_id}"
+    headers = {
+        "X-MerchantId": MERCHANT_ID,
+        "X-Secret": SECRET_KEY
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        logging.error("Platega get failed: %s", e)
+    return None
+
+def save_payment(transaction_id, user_id, amount, plan):
+    with db_lock:
+        con = db()
+        try:
+            con.execute(
+                "INSERT INTO payments (transaction_id, user_id, amount, plan, status, expires_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (transaction_id, user_id, amount, plan, "PENDING", int(time.time()) + 3600),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+async def payment_polling_loop():
+    while True:
+        await asyncio.sleep(300) # 5 minutes
+        with db_lock:
+            con = db()
+            pending = con.execute("SELECT * FROM payments WHERE status = 'PENDING'").fetchall()
+            con.close()
+        
+        for p in pending:
+            data = await asyncio.to_thread(get_platega_transaction, p["transaction_id"])
+            if data and data["status"] == "CONFIRMED":
+                activate(p["user_id"], p["plan"])
+                with db_lock:
+                    con = db()
+                    con.execute("UPDATE payments SET status = 'CONFIRMED' WHERE transaction_id = ?", (p["transaction_id"],))
+                    con.commit()
+                    con.close()
+                try:
+                    await bot.send_message(p["user_id"], "✅ Оплата подтверждена! Подписка активирована.")
+                except:
+                    pass
+
 # ─── Меню и тарифы: дизайн ─────────────────────────────────────────────
 
 def price_text(code: str) -> str:
@@ -1100,24 +1187,66 @@ async def on_pay(call: CallbackQuery):
             )
             return
         audit("TRIAL", f"activated by @{call.from_user.username or call.from_user.first_name or 'user'}")
+        await call.answer("✅ Пробный период активирован!", show_alert=True)
+        await call.message.edit_text("✅ Пробный период активирован! 🎉")
     else:
-        activate(call.from_user.id, key)
-        audit(
-            "PAY",
-            f"{key} activated by @{call.from_user.username or call.from_user.first_name or 'user'}",
+        res = await asyncio.to_thread(
+            create_platega_transaction, 
+            call.from_user.id, 
+            t["price"], 
+            t["name"], 
+            call.from_user.username
+        )
+        if not res:
+            await call.answer("Ошибка при создании платежа. Попробуйте позже.", show_alert=True)
+            return
+        
+        save_payment(res["transactionId"], call.from_user.id, t["price"], key)
+        
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=res["url"])],
+                [InlineKeyboardButton(text="🔄 Проверить платеж", callback_data=f"check_{res['transactionId']}")],
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="tariffs")],
+            ]
+        )
+        await call.message.edit_text(
+            f"📦 <b>{t['name']}</b>\n"
+            f"💰 Сумма: {price_text(key)}\n\n"
+            "Перейдите по ссылке для оплаты. После оплаты нажмите кнопку ниже для активации.",
+            reply_markup=kb
         )
 
-    await call.answer("✅ Оплата прошла (тестовый режим)", show_alert=True)
-    await call.message.edit_text(
-        f"✅ Оплата прошла успешно!\n\n"
-        f"Тариф: {t['name']}\n"
-        f"Дней: {t['period']}\n"
-        f"Сумма: {price_text(key)}\n\n"
-        "Спасибо за покупку! 🎉\n"
-        "Просто пришли ссылку — и скачивай.\n\n"
-        f"📄 Условия и правила возврата — в <a href=\"{DOCS_AGREEMENT}\">Пользовательском соглашении</a> "
-        f"(п. 7)."
-    )
+@dp.callback_query(F.data.startswith("check_"))
+async def on_check_payment(call: CallbackQuery):
+    tid = call.data[6:]
+    data = await asyncio.to_thread(get_platega_transaction, tid)
+    if not data:
+        await call.answer("Ошибка проверки. Попробуйте позже.", show_alert=True)
+        return
+    
+    if data["status"] == "CONFIRMED":
+        with db_lock:
+            con = db()
+            p = con.execute("SELECT * FROM payments WHERE transaction_id = ?", (tid,)).fetchone()
+            con.close()
+        
+        if p and p["status"] != "CONFIRMED":
+            activate(p["user_id"], p["plan"])
+            with db_lock:
+                con = db()
+                con.execute("UPDATE payments SET status = 'CONFIRMED' WHERE transaction_id = ?", (tid,))
+                con.commit()
+                con.close()
+            await call.answer("✅ Оплата подтверждена!", show_alert=True)
+            await call.message.edit_text("✅ Оплата прошла успешно! Подписка активирована.")
+        else:
+            await call.answer("✅ Оплата уже была активирована.", show_alert=True)
+    elif data["status"] == "PENDING":
+        await call.answer("⏳ Платеж еще не оплачен.", show_alert=True)
+    else:
+        await call.answer(f"❌ Статус платежа: {data['status']}", show_alert=True)
+
 
 
 @dp.callback_query(F.data == "my_tariff")
@@ -1357,6 +1486,7 @@ async def on_text(message: Message):
 
 async def main():
     init_db()
+    asyncio.create_task(payment_polling_loop())
     backup_path = await asyncio.to_thread(backup_db)
     for admin_id in ADMIN_IDS:
         try:
