@@ -23,7 +23,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     CallbackQuery,
     ErrorEvent,
@@ -428,12 +428,53 @@ def init_db() -> None:
                 ("used", "INTEGER DEFAULT 0"),
                 ("downloads", "INTEGER DEFAULT 0"),
                 ("trial_used", "INTEGER DEFAULT 0"),
+                ("referrer_id", "INTEGER DEFAULT NULL"),
+                ("ref_balance", "REAL DEFAULT 0"),
+                ("ref_count", "INTEGER DEFAULT 0"),
             ):
                 try:
                     con.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
                 except sqlite3.OperationalError:
                     pass
             con.commit()
+        finally:
+            con.close()
+
+
+def ensure_user(
+    user_id: int,
+    username: str | None,
+    first_name: str | None,
+    referrer_id: int | None = None,
+) -> dict:
+    with db_lock:
+        con = db()
+        try:
+            row = con.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            now = int(time.time())
+            if not row:
+                valid_ref = None
+                if referrer_id and referrer_id != user_id:
+                    ref_row = con.execute("SELECT user_id FROM users WHERE user_id = ?", (referrer_id,)).fetchone()
+                    if ref_row:
+                        valid_ref = referrer_id
+                        con.execute("UPDATE users SET ref_count = ref_count + 1 WHERE user_id = ?", (referrer_id,))
+                
+                con.execute(
+                    "INSERT INTO users (user_id, plan, expires_at, created_at, username, first_name, referrer_id, ref_balance, ref_count) "
+                    "VALUES (?, 'none', 0, ?, ?, ?, ?, 0, 0)",
+                    (user_id, now, username, first_name, valid_ref),
+                )
+                con.commit()
+                row = con.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            else:
+                con.execute(
+                    "UPDATE users SET username = COALESCE(?, username), "
+                    "first_name = COALESCE(?, first_name) WHERE user_id = ?",
+                    (username, first_name, user_id),
+                )
+                con.commit()
+            return dict(row)
         finally:
             con.close()
 
@@ -938,6 +979,48 @@ def save_payment(transaction_id, user_id, amount, plan):
         finally:
             con.close()
 
+def process_successful_payment(transaction_id: str) -> dict | None:
+    with db_lock:
+        con = db()
+        try:
+            p = con.execute("SELECT * FROM payments WHERE transaction_id = ?", (transaction_id,)).fetchone()
+            if not p or p["status"] == "CONFIRMED":
+                return None
+            
+            user_id = p["user_id"]
+            plan = p["plan"]
+            amount = p["amount"]
+            
+            con.execute("UPDATE payments SET status = 'CONFIRMED' WHERE transaction_id = ?", (transaction_id,))
+            con.commit()
+        finally:
+            con.close()
+
+    activate(user_id, plan)
+
+    referrer_id = None
+    reward = 0.0
+    with db_lock:
+        con = db()
+        try:
+            u = con.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            if u and u["referrer_id"]:
+                referrer_id = u["referrer_id"]
+                reward = round(amount * 0.30, 2)
+                con.execute("UPDATE users SET ref_balance = ref_balance + ? WHERE user_id = ?", (reward, referrer_id))
+                con.commit()
+        finally:
+            con.close()
+
+    return {
+        "user_id": user_id,
+        "plan": plan,
+        "amount": amount,
+        "referrer_id": referrer_id,
+        "reward": reward,
+    }
+
+
 async def payment_polling_loop():
     while True:
         await asyncio.sleep(300) # 5 minutes
@@ -949,16 +1032,24 @@ async def payment_polling_loop():
         for p in pending:
             data = await asyncio.to_thread(get_platega_transaction, p["transaction_id"])
             if data and data["status"] == "CONFIRMED":
-                activate(p["user_id"], p["plan"])
-                with db_lock:
-                    con = db()
-                    con.execute("UPDATE payments SET status = 'CONFIRMED' WHERE transaction_id = ?", (p["transaction_id"],))
-                    con.commit()
-                    con.close()
-                try:
-                    await bot.send_message(p["user_id"], "✅ Оплата подтверждена! Подписка активирована.")
-                except:
-                    pass
+                res = process_successful_payment(p["transaction_id"])
+                if res:
+                    try:
+                        await bot.send_message(res["user_id"], "✅ Оплата подтверждена! Подписка активирована.")
+                    except Exception:
+                        pass
+                    if res["referrer_id"] and res["reward"] > 0:
+                        try:
+                            plan_name = PLAN_NAMES.get(res["plan"], res["plan"])
+                            reward_str = f"{res['reward']:.2f}".rstrip("0").rstrip(".") if isinstance(res['reward'], float) else str(res['reward'])
+                            await bot.send_message(
+                                res["referrer_id"],
+                                f"🎉 <b>Реферальное вознаграждение!</b>\n\n"
+                                f"Приглашённый вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
+                                f"Вам начислено <b>{reward_str} ₽</b> (30%) на реферальный баланс!"
+                            )
+                        except Exception:
+                            pass
 
 # ─── Меню и тарифы: дизайн ─────────────────────────────────────────────
 
@@ -984,12 +1075,40 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="📋 Мой тариф", callback_data="my_tariff")],
+        [InlineKeyboardButton(text="👥 Реферальная программа", callback_data="referral")],
         [InlineKeyboardButton(text="📄 Документы", callback_data="docs")],
         [InlineKeyboardButton(text="📞 Служба поддержки", url=f"https://t.me/{SUPPORT.lstrip('@')}")],
     ]
     if is_admin(user_id):
         kb.append([InlineKeyboardButton(text="⚙️ Админ панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def referral_text(user_id: int, bot_username: str) -> str:
+    u = get_user(user_id)
+    ref_count = u.get("ref_count", 0) if u else 0
+    ref_balance = u.get("ref_balance", 0.0) if u else 0.0
+    balance_str = f"{ref_balance:.2f}".rstrip("0").rstrip(".") if isinstance(ref_balance, float) else str(ref_balance)
+    
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    return (
+        f"👥 <b>Реферальная программа</b>\n\n"
+        f"Приглашайте друзей и получайте <b>30%</b> от стоимости купленных ими подписок на ваш реферальный баланс!\n\n"
+        f"📊 <b>Ваша статистика:</b>\n"
+        f"• Приглашено пользователей: <b>{ref_count}</b>\n"
+        f"• Реферальный баланс: <b>{balance_str} ₽</b>\n\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"<i>Просто отправьте эту ссылку другу. Как только он запустит бота и оплатит любой тариф, 30% от суммы автоматически поступят на ваш баланс!</i>"
+    )
+
+
+def referral_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back")],
+        ]
+    )
 
 
 def docs_keyboard() -> InlineKeyboardMarkup:
@@ -1078,12 +1197,21 @@ def no_access_text() -> str:
 # ─── Команды ───────────────────────────────────────────────────────────
 
 @dp.message(Command("start"))
-async def on_start(message: Message):
+async def on_start(message: Message, command: CommandObject):
     user_id = message.from_user.id
-    touch_user(
+    args = command.args if command else None
+    referrer_id = None
+    if args and args.startswith("ref_"):
+        try:
+            referrer_id = int(args.replace("ref_", ""))
+        except ValueError:
+            pass
+
+    ensure_user(
         user_id,
         message.from_user.username,
         message.from_user.first_name,
+        referrer_id=referrer_id,
     )
     text = (
         f"👋 Привет, {html.escape(message.from_user.first_name or '')}!\n\n"
@@ -1226,20 +1354,22 @@ async def on_check_payment(call: CallbackQuery):
         return
     
     if data["status"] == "CONFIRMED":
-        with db_lock:
-            con = db()
-            p = con.execute("SELECT * FROM payments WHERE transaction_id = ?", (tid,)).fetchone()
-            con.close()
-        
-        if p and p["status"] != "CONFIRMED":
-            activate(p["user_id"], p["plan"])
-            with db_lock:
-                con = db()
-                con.execute("UPDATE payments SET status = 'CONFIRMED' WHERE transaction_id = ?", (tid,))
-                con.commit()
-                con.close()
+        res = process_successful_payment(tid)
+        if res:
             await call.answer("✅ Оплата подтверждена!", show_alert=True)
             await call.message.edit_text("✅ Оплата прошла успешно! Подписка активирована.")
+            if res["referrer_id"] and res["reward"] > 0:
+                try:
+                    plan_name = PLAN_NAMES.get(res["plan"], res["plan"])
+                    reward_str = f"{res['reward']:.2f}".rstrip("0").rstrip(".") if isinstance(res['reward'], float) else str(res['reward'])
+                    await bot.send_message(
+                        res["referrer_id"],
+                        f"🎉 <b>Реферальное вознаграждение!</b>\n\n"
+                        f"Приглашённый вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
+                        f"Вам начислено <b>{reward_str} ₽</b> (30%) на реферальный баланс!"
+                    )
+                except Exception:
+                    pass
         else:
             await call.answer("✅ Оплата уже была активирована.", show_alert=True)
     elif data["status"] == "PENDING":
@@ -1249,12 +1379,11 @@ async def on_check_payment(call: CallbackQuery):
 
 
 
-@dp.callback_query(F.data == "my_tariff")
-async def on_my_tariff(call: CallbackQuery):
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back")]]
-    )
-    await call.message.edit_text(my_tariff_text(call.from_user.id), reply_markup=kb)
+@dp.callback_query(F.data == "referral")
+async def on_referral(call: CallbackQuery):
+    me = await bot.get_me()
+    text = referral_text(call.from_user.id, me.username)
+    await call.message.edit_text(text, reply_markup=referral_keyboard(), disable_web_page_preview=True)
 
 
 @dp.callback_query(F.data == "docs")
@@ -1289,13 +1418,16 @@ def user_line(u: dict) -> str:
     name = html.escape(u.get("username") or u.get("first_name") or "—")
     link = f"@{name}" if u.get("username") else name
     used = "да" if u.get("used") else "нет"
+    ref_bal = u.get("ref_balance", 0.0)
+    bal_str = f"{ref_bal:.2f}".rstrip("0").rstrip(".") if isinstance(ref_bal, float) else str(ref_bal)
     return (
         f"• ID <code>{u['user_id']}</code> | {link}\n"
         f"  Тариф: <b>{PLAN_NAMES.get(u['plan'], u['plan'])}</b> — "
         f"{'✅ оформлена' if active else '❌ истекла/нет'}\n"
         f"  До: {datetime.fromtimestamp(u['expires_at']).strftime('%d.%m.%Y %H:%M')} "
         f"(осталось {days} дн {hours} ч)\n"
-        f"  Пользовался ботом: {used}, скачиваний: {u.get('downloads', 0)}"
+        f"  Пользовался ботом: {used}, скачиваний: {u.get('downloads', 0)}\n"
+        f"  Рефералов: {u.get('ref_count', 0)}, реф. баланс: {bal_str} ₽"
     )
 
 
