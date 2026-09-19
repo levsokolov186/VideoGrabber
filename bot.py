@@ -1006,7 +1006,7 @@ def process_successful_payment(transaction_id: str) -> dict | None:
             u = con.execute("SELECT referrer_id FROM users WHERE user_id = ?", (user_id,)).fetchone()
             if u and u["referrer_id"]:
                 referrer_id = u["referrer_id"]
-                reward = round(amount * 0.30, 2)
+                reward = round(amount * 0.05, 2)
                 con.execute("UPDATE users SET ref_balance = ref_balance + ? WHERE user_id = ?", (reward, referrer_id))
                 con.commit()
         finally:
@@ -1046,7 +1046,7 @@ async def payment_polling_loop():
                                 res["referrer_id"],
                                 f"🎉 <b>Реферальное вознаграждение!</b>\n\n"
                                 f"Приглашённый вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
-                                f"Вам начислено <b>{reward_str} ₽</b> (30%) на реферальный баланс!"
+                                 f"Вам начислено <b>{reward_str} ₽</b> (5%) на баланс партнерской программы!"
                             )
                         except Exception:
                             pass
@@ -1075,7 +1075,7 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text="💰 Тарифы", callback_data="tariffs")],
         [InlineKeyboardButton(text="📋 Мой тариф", callback_data="my_tariff")],
-        [InlineKeyboardButton(text="👥 Реферальная программа", callback_data="referral")],
+        [InlineKeyboardButton(text="🤝 Партнерская программа", callback_data="referral")],
         [InlineKeyboardButton(text="📄 Документы", callback_data="docs")],
         [InlineKeyboardButton(text="📞 Служба поддержки", url=f"https://t.me/{SUPPORT.lstrip('@')}")],
     ]
@@ -1092,14 +1092,27 @@ def referral_text(user_id: int, bot_username: str) -> str:
     
     ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
     return (
-        f"👥 <b>Реферальная программа</b>\n\n"
-        f"Приглашайте друзей и получайте <b>30%</b> от стоимости купленных ими подписок на ваш реферальный баланс!\n\n"
+        f"🤝 <b>Партнерская программа</b>\n\n"
         f"📊 <b>Ваша статистика:</b>\n"
         f"• Приглашено пользователей: <b>{ref_count}</b>\n"
-        f"• Реферальный баланс: <b>{balance_str} ₽</b>\n\n"
-        f"🔗 <b>Ваша реферальная ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
-        f"<i>Просто отправьте эту ссылку другу. Как только он запустит бота и оплатит любой тариф, 30% от суммы автоматически поступят на ваш баланс!</i>"
+        f"• Баланс: <b>{balance_str} ₽</b>\n"
+        f"🔗 <b>Ваша реферальная ссылка:</b> <code>{ref_link}</code>\n\n"
+        f"📋 <b>Правила партнерской программы:</b>\n"
+        f"• В каждом видео упоминать наш сервис\n"
+        f"• Рассказать, как и где можно скачать видео без водяных знаков\n"
+        f"• Назвать название сервиса\n"
+        f"• Показать, как работает сервис\n"
+        f"• Оставить ссылку в описании и обязательно о ней упомянуть\n\n"
+        f"📱 <b>Форматы видео:</b>\n"
+        f"• YouTube + YouTube Shorts\n"
+        f"• Instagram Reels\n"
+        f"• TikTok\n\n"
+        f"💰 <b>Условия вознаграждения:</b>\n"
+        f"При выполнении всех условий мы готовы вам выплачивать <b>5% от всей выручки за месяц каждый месяц</b>. Чем больше вы приведете клиентов, тем больше у вас будет выплата!\n\n"
+        f"⚠️ <b>Важные требования:</b>\n"
+        f"• 💳 Выплаты делаем на <b>карты РФ</b>.\n"
+        f"• 💼 Обязательно наличие статуса <b>самозанятого или ИП</b> (иначе мы с вами не работаем).\n"
+        f"• 💬 <b>Перед тем как начать сотрудничать</b> с нашим сервисом, обязательно напишите: {SUPPORT}"
     )
 
 
@@ -1364,9 +1377,9 @@ async def on_check_payment(call: CallbackQuery):
                     reward_str = f"{res['reward']:.2f}".rstrip("0").rstrip(".") if isinstance(res['reward'], float) else str(res['reward'])
                     await bot.send_message(
                         res["referrer_id"],
-                        f"🎉 <b>Реферальное вознаграждение!</b>\n\n"
-                        f"Приглашённый вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
-                        f"Вам начислено <b>{reward_str} ₽</b> (30%) на реферальный баланс!"
+                         f"🎉 <b>Партнерское вознаграждение!</b>\n\n"
+                         f"Привлеченный вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
+                         f"Вам начислено <b>{reward_str} ₽</b> (5%) на баланс партнерской программы!"
                     )
                 except Exception:
                     pass
