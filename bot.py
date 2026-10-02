@@ -576,7 +576,7 @@ def build_opts(
         }
     return {
         **base,
-        "format": "best",
+        "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(outdir, "%(id)s.%(ext)s"),
     }
