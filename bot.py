@@ -1105,6 +1105,14 @@ async def on_status(message: Message):
     await message.answer(my_tariff_text(message.from_user.id), reply_markup=kb)
 
 
+@dp.callback_query(F.data == "my_tariff")
+async def on_my_tariff(call: CallbackQuery):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back")]]
+    )
+    await call.message.edit_text(my_tariff_text(call.from_user.id), reply_markup=kb)
+
+
 @dp.callback_query(F.data == "back")
 async def on_back(call: CallbackQuery):
     await call.message.edit_text(
