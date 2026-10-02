@@ -2,18 +2,14 @@ import asyncio
 import html
 import logging
 import os
-import random
 import re
 import shutil
-import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-import urllib.request
-import requests
 from collections import deque
 from datetime import datetime
 from urllib.parse import urlparse
@@ -32,6 +28,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from curl_cffi import requests as curl_requests
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -62,7 +59,6 @@ if not BOT_TOKEN:
 if not MERCHANT_ID or not SECRET_KEY:
     sys.exit("Укажите MERCHANT_ID и SECRET_KEY в файле .env")
 
-PROXY = os.getenv("PROXY", "").strip() or None
 COOKIES_FILE = os.getenv("COOKIES_FILE", "").strip() or None
 if not COOKIES_FILE:
     default_cookies = os.path.join(BASE_DIR, "cookies.txt")
@@ -75,110 +71,6 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().
 SUPPORT = "@DimaKacaricka14363"
 DOCS_PRIVACY = "https://telegra.ph/Politika-konfidencialnosti-08-09-60"
 DOCS_AGREEMENT = "https://telegra.ph/Polzovatelskoe-soglashenie-08-09-29"
-
-
-def get_system_proxy() -> str | None:
-    try:
-        import winreg
-
-        key = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
-            enabled, _ = winreg.QueryValueEx(k, "ProxyEnable")
-            server, _ = winreg.QueryValueEx(k, "ProxyServer")
-        if enabled and server:
-            server = server.strip()
-            if not server.startswith(("http://", "https://", "socks4://", "socks5://")):
-                server = "http://" + server
-            return server
-    except Exception:
-        pass
-    return None
-
-
-if not PROXY:
-    PROXY = get_system_proxy()
-    if PROXY:
-        logging.info("system proxy detected: %s", PROXY)
-
-PROXY_POOL_URLS = [
-    "https://www.proxy-list.download/api/v1/get?type=https",
-    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",
-]
-proxy_pool: list[str] = []
-proxy_pool_lock = threading.Lock()
-last_pool_fetch = 0.0
-
-
-def fetch_proxy_pool() -> None:
-    global proxy_pool, last_pool_fetch
-    if time.time() - last_pool_fetch < 600:
-        return
-    for url in PROXY_POOL_URLS:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
-            data = urllib.request.urlopen(req, timeout=15).read().decode()
-            lines = [ln.strip() for ln in data.splitlines() if ln.strip()]
-            if lines:
-                with proxy_pool_lock:
-                    proxy_pool = lines
-                last_pool_fetch = time.time()
-                logging.info("proxy pool updated: %d proxies", len(lines))
-                return
-        except Exception as e:
-            logging.warning("proxy pool fetch failed (%s): %s", url, e)
-
-
-def next_proxy() -> str | None:
-    fetch_proxy_pool()
-    with proxy_pool_lock:
-        return random.choice(proxy_pool) if proxy_pool else None
-
-
-# Площадки, которые жёстко блокируют IP (бесплатный пул им не нужен)
-STRICT_PLATFORMS = {"tiktok", "instagram"}
-
-# Популярные локальные прокси-порты VPN-клиентов: (схема, порт)
-LOCAL_PROXY_PORTS = [
-    ("socks5", 1080), ("http", 7890), ("socks5", 7891),
-    ("http", 10808), ("socks5", 10809), ("http", 8888),
-    ("http", 8080), ("http", 8118), ("socks5", 20171),
-    ("http", 2080), ("socks5", 12345), ("http", 1081),
-]
-local_proxy_cache = {"value": None, "checked": False}
-local_proxy_lock = threading.Lock()
-
-
-def get_local_proxy() -> str | None:
-    if local_proxy_cache["checked"]:
-        return local_proxy_cache["value"]
-    with local_proxy_lock:
-        if local_proxy_cache["checked"]:
-            return local_proxy_cache["value"]
-        for scheme, port in LOCAL_PROXY_PORTS:
-            s = socket.socket()
-            s.settimeout(1)
-            try:
-                s.connect(("127.0.0.1", port))
-            except OSError:
-                s.close()
-                continue
-            s.close()
-            proxy = f"{scheme}://127.0.0.1:{port}"
-            try:
-                handler = urllib.request.ProxyHandler({scheme: proxy})
-                opener = urllib.request.build_opener(handler)
-                req = urllib.request.Request(
-                    "https://tiktok.com/", headers={"User-Agent": "curl/8.0"}
-                )
-                with opener.open(req, timeout=6) as r:
-                    r.read(64)
-                local_proxy_cache["value"] = proxy
-                logging.info("local VPN proxy detected: %s", proxy)
-                break
-            except Exception:
-                continue
-        local_proxy_cache["checked"] = True
-    return local_proxy_cache["value"]
 
 DAY = 86400
 
@@ -237,6 +129,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 pass
             return None
         return await handler(event, data)
+
 
 if TG_API_SERVER:
     bot = Bot(
@@ -302,7 +195,6 @@ async def on_error(event: ErrorEvent):
         except Exception:
             pass
 
-# ─── Платформы и тарифы ────────────────────────────────────────────────
 
 ALL_PLATFORMS = {
     "youtube", "tiktok", "instagram", "vk", "twitter", "reddit",
@@ -312,17 +204,17 @@ ALL_PLATFORMS = {
 PLATFORM_DOMAINS = {
     "youtube": ("youtube.com", "youtu.be", "music.youtube.com", "youtube-nocookie.com"),
     "tiktok": ("tiktok.com", "vt.tiktok.com"),
-    "instagram": ("instagram.com"),
+    "instagram": ("instagram.com",),
     "vk": ("vk.com", "m.vk.com", "vkvideo.ru"),
     "twitter": ("twitter.com", "x.com"),
     "reddit": ("reddit.com", "redd.it"),
     "facebook": ("facebook.com", "fb.watch", "m.facebook.com"),
     "pinterest": ("pinterest.com", "pinterest.ru", "pin.it"),
-    "twitch": ("twitch.tv"),
-    "rutube": ("rutube.ru"),
-    "likee": ("likee.com"),
-    "coub": ("coub.com"),
-    "streamable": ("streamable.com"),
+    "twitch": ("twitch.tv",),
+    "rutube": ("rutube.ru",),
+    "likee": ("likee.com",),
+    "coub": ("coub.com",),
+    "streamable": ("streamable.com",),
 }
 
 POPULAR_10 = "YouTube, TikTok, Instagram, VK, X/Twitter, Reddit, Facebook, Pinterest, Twitch, Rutube"
@@ -386,14 +278,17 @@ PLAN_ALIASES = {"t1": "299", "t2": "399", "t3": "year"}
 def resolve_plan(code: str) -> str:
     return PLAN_ALIASES.get(code.lower(), code.lower())
 
-# ─── База данных ───────────────────────────────────────────────────────
 
 db_lock = threading.Lock()
 
 
 def db() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30.0)
     con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA synchronous=NORMAL;")
+    con.execute("PRAGMA temp_store=MEMORY;")
+    con.execute("PRAGMA cache_size=-20000;")
     return con
 
 
@@ -616,9 +511,6 @@ def all_users() -> list[dict]:
             con.close()
 
 
-# ─── Скачивание ────────────────────────────────────────────────────────
-
-
 INVISIBLE_RE = re.compile(
     r"[\u200b\u200c\u200d\u200e\u200f\u2060\u2061\u2062\u2063\u2064\ufeff\u00ad\u061c]"
 )
@@ -648,7 +540,6 @@ def detect_platform(url: str) -> str:
 def build_opts(
     outdir: str,
     is_audio: bool = False,
-    proxy: str | None = None,
     platform: str = "",
 ) -> dict:
     base = {
@@ -656,9 +547,13 @@ def build_opts(
         "no_warnings": True,
         "noplaylist": True,
         "windowsfilenames": True,
-        "socket_timeout": 60,
-        "retries": 5,
-        "fragment_retries": 5,
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
+        "nocheckcertificate": True,
+        "geo_bypass": True,
+        "concurrent_fragment_downloads": 8,
+        "extractor_retries": 2,
     }
     if platform == "tiktok":
         base["http_headers"] = {
@@ -668,12 +563,6 @@ def build_opts(
             ),
             "Referer": "https://www.tiktok.com/",
         }
-    if proxy == "":
-        effective = None
-    else:
-        effective = proxy or PROXY
-    if effective:
-        base["proxy"] = effective
     if COOKIES_FILE:
         base["cookiefile"] = COOKIES_FILE
     if COOKIES_BROWSER:
@@ -685,10 +574,9 @@ def build_opts(
             "outtmpl": os.path.join(outdir, "%(id)s.%(ext)s"),
             "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}],
         }
-    fmt = "best"
     return {
         **base,
-        "format": fmt,
+        "format": "best",
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(outdir, "%(id)s.%(ext)s"),
     }
@@ -742,7 +630,7 @@ def probe_audio_info(path: str) -> dict:
                 "-show_entries", "stream=codec_name,profile,bit_rate",
                 "-of", "default=noprint_wrappers=1", path,
             ],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=15,
         )
         info: dict[str, str] = {}
         for line in (r.stdout or "").splitlines():
@@ -782,7 +670,7 @@ def fix_audio(path: str) -> str:
                 "-c", "copy", "-movflags", "+faststart", out,
             ],
             capture_output=True,
-            timeout=180,
+            timeout=90,
         )
         if r.returncode == 0 and os.path.exists(out):
             os.replace(out, path)
@@ -792,16 +680,14 @@ def fix_audio(path: str) -> str:
     return path
 
 
-def instagram_direct_download(url: str, proxy: str | None, outdir: str) -> str:
+def instagram_direct_download(url: str, outdir: str) -> str:
     extract_opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "socket_timeout": 30,
+        "socket_timeout": 20,
         "retries": 2,
     }
-    if proxy:
-        extract_opts["proxy"] = proxy
     if COOKIES_FILE:
         extract_opts["cookiefile"] = COOKIES_FILE
     if COOKIES_BROWSER:
@@ -821,39 +707,23 @@ def instagram_direct_download(url: str, proxy: str | None, outdir: str) -> str:
     ext = best.get("ext") or "mp4"
     dest = os.path.join(outdir, f"{info.get('id', 'video')}.{ext}")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        ),
-        "Referer": "https://www.instagram.com/",
-        "Accept": "*/*",
-    }
-    if COOKIES_FILE:
-        try:
-            from http.cookiejar import MozillaCookieJar
-
-            jar = MozillaCookieJar(COOKIES_FILE)
-            jar.load(ignore_discard=True, ignore_expires=True)
-            cookie_header = "; ".join(f"{c.name}={c.value}" for c in jar)
-            if cookie_header:
-                headers["Cookie"] = cookie_header
-        except Exception as e:
-            logging.warning("cookie load failed: %s", e)
-    req = urllib.request.Request(file_url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
-    logging.info("instagram file fetched directly")
+    res = curl_requests.get(file_url, impersonate="chrome", timeout=120)
+    if res.status_code == 200:
+        with open(dest, "wb") as f:
+            f.write(res.content)
+    else:
+        raise RuntimeError(f"Instagram download failed with status {res.status_code}")
+    logging.info("instagram file fetched directly via curl_cffi")
     return dest
 
 
 def _download_once(
-    url: str, is_audio: bool, proxy: str | None, platform: str = ""
+    url: str, is_audio: bool, platform: str = ""
 ) -> str:
     with tempfile.TemporaryDirectory() as outdir:
         if platform == "instagram" and not is_audio:
             try:
-                path = instagram_direct_download(url, proxy, outdir)
+                path = instagram_direct_download(url, outdir)
                 path = fix_audio(path)
                 final_dir = tempfile.mkdtemp(prefix="tg_")
                 final_path = os.path.join(final_dir, os.path.basename(path))
@@ -861,7 +731,7 @@ def _download_once(
                 return final_path
             except Exception as e:
                 logging.warning("instagram direct failed (%s), falling back", e)
-        opts = build_opts(outdir, is_audio, proxy, platform)
+        opts = build_opts(outdir, is_audio, platform)
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             if info.get("_type") == "playlist" and not info.get("entries"):
@@ -886,33 +756,12 @@ def _download_once(
 
 def download(url: str, is_audio: bool = False) -> str:
     platform = detect_platform(url)
-    strict = platform in STRICT_PLATFORMS
-    local = get_local_proxy()
-
-    if strict:
-        order = ["", PROXY, local]
-        order += [next_proxy() for _ in range(2)]
-    else:
-        order = ["", PROXY, local]
-        order += [next_proxy() for _ in range(2)]
-
-    last_error: Exception | None = None
-    seen: set[str] = set()
-    for proxy in order:
-        key = proxy or "direct"
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            path = _download_once(url, is_audio, proxy, platform)
-            logging.info("download ok via %s", key)
-            return path
-        except DownloadError as e:
-            last_error = e
-            logging.warning("download attempt failed via %s: %s", key, e)
-        except Exception:
-            raise
-    raise last_error or RuntimeError("Скачивание не удалось")
+    try:
+        path = _download_once(url, is_audio, platform)
+        logging.info("download ok")
+        return path
+    except Exception:
+        raise RuntimeError("Скачивание не удалось")
 
 
 def cleanup(path: str) -> None:
@@ -927,8 +776,6 @@ def cleanup(path: str) -> None:
     except OSError:
         pass
 
-
-# ─── Платежи Platega ───────────────────────────────────────────────────
 
 def create_platega_transaction(user_id, amount, plan, username):
     url = "https://app.platega.io/v2/transaction/process"
@@ -945,12 +792,13 @@ def create_platega_transaction(user_id, amount, plan, username):
         "metadata": {"userId": str(user_id), "userName": username or str(user_id)}
     }
     try:
-        response = requests.post(url, json=data, headers=headers, timeout=10)
+        response = curl_requests.post(url, json=data, headers=headers, impersonate="chrome", timeout=10)
         if response.status_code == 200:
             return response.json()
     except Exception as e:
         logging.error("Platega create failed: %s", e)
     return None
+
 
 def get_platega_transaction(transaction_id):
     url = f"https://app.platega.io/transaction/{transaction_id}"
@@ -959,12 +807,13 @@ def get_platega_transaction(transaction_id):
         "X-Secret": SECRET_KEY
     }
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = curl_requests.get(url, headers=headers, impersonate="chrome", timeout=10)
         if response.status_code == 200:
             return response.json()
     except Exception as e:
         logging.error("Platega get failed: %s", e)
     return None
+
 
 def save_payment(transaction_id, user_id, amount, plan):
     with db_lock:
@@ -978,6 +827,7 @@ def save_payment(transaction_id, user_id, amount, plan):
             con.commit()
         finally:
             con.close()
+
 
 def process_successful_payment(transaction_id: str) -> dict | None:
     with db_lock:
@@ -1023,7 +873,7 @@ def process_successful_payment(transaction_id: str) -> dict | None:
 
 async def payment_polling_loop():
     while True:
-        await asyncio.sleep(300) # 5 minutes
+        await asyncio.sleep(300)
         with db_lock:
             con = db()
             pending = con.execute("SELECT * FROM payments WHERE status = 'PENDING'").fetchall()
@@ -1046,12 +896,11 @@ async def payment_polling_loop():
                                 res["referrer_id"],
                                 f"🎉 <b>Реферальное вознаграждение!</b>\n\n"
                                 f"Приглашённый вами пользователь оплатил подписку <b>{plan_name}</b> ({res['amount']} ₽).\n"
-                                 f"Вам начислено <b>{reward_str} ₽</b> (5%) на баланс партнерской программы!"
+                                f"Вам начислено <b>{reward_str} ₽</b> (5%) на баланс партнерской программы!"
                             )
                         except Exception:
                             pass
 
-# ─── Меню и тарифы: дизайн ─────────────────────────────────────────────
 
 def price_text(code: str) -> str:
     price = PLANS[code]["price"]
@@ -1198,8 +1047,6 @@ def no_access_text() -> str:
     )
 
 
-# ─── Команды ───────────────────────────────────────────────────────────
-
 @dp.message(Command("start"))
 async def on_start(message: Message, command: CommandObject):
     user_id = message.from_user.id
@@ -1257,8 +1104,6 @@ async def on_status(message: Message):
     )
     await message.answer(my_tariff_text(message.from_user.id), reply_markup=kb)
 
-
-# ─── Меню: callback-навигация ──────────────────────────────────────────
 
 @dp.callback_query(F.data == "back")
 async def on_back(call: CallbackQuery):
@@ -1349,6 +1194,7 @@ async def on_pay(call: CallbackQuery):
             reply_markup=kb
         )
 
+
 @dp.callback_query(F.data.startswith("check_"))
 async def on_check_payment(call: CallbackQuery):
     tid = call.data[6:]
@@ -1382,7 +1228,6 @@ async def on_check_payment(call: CallbackQuery):
         await call.answer(f"❌ Статус платежа: {data['status']}", show_alert=True)
 
 
-
 @dp.callback_query(F.data == "referral")
 async def on_referral(call: CallbackQuery):
     me = await bot.get_me()
@@ -1406,8 +1251,6 @@ async def on_admin_panel(call: CallbackQuery):
     )
     await call.message.edit_text(admin_panel_text(), reply_markup=kb)
 
-
-# ─── Админ-панель ──────────────────────────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
